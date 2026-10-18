@@ -7,6 +7,12 @@ ARG CUDA_VERSION=12.8.1
 # Target the two GPU families this image is intended for:
 #   sm_89  - Ada (L40S / RTX 4090 class)
 #   sm_120 - Blackwell (RTX PRO 6000 Blackwell class)
+#
+# Keep the Git checkout and CMake object tree in BuildKit cache mounts. The
+# snapshot produced by this stage contains only /out (the runtime binaries and
+# shared libraries), rather than the full source/object tree. This both keeps
+# the normal layer small enough to survive GC and makes a cache miss cheap:
+# Ninja can reuse the persistent object cache instead of recompiling llama.cpp.
 # -----------------------------------------------------------------------------
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS llama-builder
 
@@ -21,15 +27,33 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
       libcurl4-openssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN git clone https://github.com/ggml-org/llama.cpp.git /src/llama.cpp \
-    && git -C /src/llama.cpp checkout "${LLAMA_CPP_REF}" \
-    && cmake -S /src/llama.cpp -B /src/llama.cpp/build -G Ninja \
-         -DCMAKE_BUILD_TYPE=Release \
-         -DGGML_CUDA=ON \
-         -DGGML_NATIVE=OFF \
-         -DLLAMA_CURL=ON \
-         -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}" \
-    && cmake --build /src/llama.cpp/build --target llama-server llama-cli -j"$(nproc)"
+RUN --mount=type=cache,id=agent-lab-llama-src,target=/cache/llama-src,sharing=locked \
+    --mount=type=cache,id=agent-lab-llama-build,target=/cache/llama-build,sharing=locked \
+    set -eux; \
+    if [ ! -d /cache/llama-src/.git ]; then \
+      git clone https://github.com/ggml-org/llama.cpp.git /cache/llama-src; \
+    else \
+      git -C /cache/llama-src remote set-url origin https://github.com/ggml-org/llama.cpp.git; \
+      git -C /cache/llama-src fetch --force --tags origin; \
+    fi; \
+    if git -C /cache/llama-src rev-parse --verify --quiet "${LLAMA_CPP_REF}^{commit}" >/dev/null; then \
+      git -C /cache/llama-src checkout --detach --force "${LLAMA_CPP_REF}"; \
+    elif git -C /cache/llama-src rev-parse --verify --quiet "origin/${LLAMA_CPP_REF}^{commit}" >/dev/null; then \
+      git -C /cache/llama-src checkout --detach --force "origin/${LLAMA_CPP_REF}"; \
+    else \
+      git -C /cache/llama-src fetch --force origin "${LLAMA_CPP_REF}"; \
+      git -C /cache/llama-src checkout --detach --force FETCH_HEAD; \
+    fi; \
+    cmake -S /cache/llama-src -B /cache/llama-build -G Ninja \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DGGML_CUDA=ON \
+      -DGGML_NATIVE=OFF \
+      -DLLAMA_CURL=ON \
+      -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}"; \
+    cmake --build /cache/llama-build --target llama-server llama-cli -j"$(nproc)"; \
+    rm -rf /out; \
+    mkdir -p /out; \
+    cp -a /cache/llama-build/bin/. /out/
 
 # -----------------------------------------------------------------------------
 # Runtime
@@ -77,7 +101,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
          > /etc/ssh/sshd_config.d/agent-lab.conf \
     && git lfs install --system
 
-COPY --from=llama-builder /src/llama.cpp/build/bin/ /opt/llama.cpp/bin/
+COPY --from=llama-builder /out/ /opt/llama.cpp/bin/
 
 # OMP: use its verified prebuilt binary installer, pinned to a release.
 RUN PI_INSTALL_DIR=/usr/local/bin \
