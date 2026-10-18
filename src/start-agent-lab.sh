@@ -42,6 +42,14 @@ export HF_HOME
 export HUGGINGFACE_HUB_CACHE="${HUGGINGFACE_HUB_CACHE:-${HF_HOME}/hub}"
 export HOME=/root
 
+# Hermes' checkout/venv remains image-owned. HERMES_HOME is fixed in the image
+# and ~/.hermes points at it too, so SSH sessions, docker exec, and processes
+# launched by the entrypoint all resolve exactly the same state root.
+HERMES_IMAGE_HOME=/opt/hermes-home
+export HERMES_HOME="${HERMES_IMAGE_HOME}"
+rm -rf /root/.hermes
+ln -sfn "${HERMES_IMAGE_HOME}" /root/.hermes
+
 # OMP is a standalone binary, so its complete mutable state can live on the volume.
 if [[ -e /root/.omp && ! -L /root/.omp ]]; then
   if [[ -d /root/.omp && -z "$(find /root/.omp -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null)" ]]; then
@@ -52,23 +60,50 @@ if [[ -e /root/.omp && ! -L /root/.omp ]]; then
 fi
 ln -sfn "${STATE_ROOT}/omp" /root/.omp
 
-# Hermes' code/venv remains image-owned under /opt/hermes-home. Persist the
-# mutable pieces individually so a RunPod /workspace volume does not hide code.
-HERMES_IMAGE_HOME=/opt/hermes-home
-export HERMES_HOME="${HERMES_IMAGE_HOME}"
-for name in config.yaml .env skills sessions logs profiles; do
-  target="${STATE_ROOT}/hermes/${name}"
-  case "${name}" in
-    config.yaml|.env) mkdir -p "$(dirname "${target}")"; [[ -e "${target}" ]] || : > "${target}" ;;
-    *) mkdir -p "${target}" ;;
-  esac
-  rm -rf "${HERMES_IMAGE_HOME:?}/${name}"
-  ln -sfn "${target}" "${HERMES_IMAGE_HOME}/${name}"
-done
-for name in state.db auth.json; do
-  target="${STATE_ROOT}/hermes/${name}"
-  rm -f "${HERMES_IMAGE_HOME}/${name}"
-  ln -sfn "${target}" "${HERMES_IMAGE_HOME}/${name}"
+# Persist Hermes' mutable user state individually so /workspace can be mounted
+# independently while the source checkout and venv stay immutable under /opt.
+persist_hermes_file() {
+  local name="$1" seed_mode="${2:-empty}"
+  local source="${HERMES_IMAGE_HOME}/${name}"
+  local target="${STATE_ROOT}/hermes/${name}"
+
+  if [[ ! -e "${target}" && ! -L "${target}" ]]; then
+    if [[ -f "${source}" && ! -L "${source}" ]]; then
+      cp -a "${source}" "${target}"
+    elif [[ "${seed_mode}" == "yaml" ]]; then
+      printf '{}\n' > "${target}"
+    elif [[ "${seed_mode}" == "empty" ]]; then
+      : > "${target}"
+    fi
+  fi
+  rm -f "${source}"
+  ln -sfn "${target}" "${source}"
+}
+
+persist_hermes_dir() {
+  local name="$1"
+  local source="${HERMES_IMAGE_HOME}/${name}"
+  local target="${STATE_ROOT}/hermes/${name}"
+
+  if [[ ! -d "${target}" ]]; then
+    mkdir -p "${target}"
+    if [[ -d "${source}" && ! -L "${source}" ]]; then
+      cp -a "${source}/." "${target}/" 2>/dev/null || true
+    fi
+  fi
+  rm -rf "${source}"
+  ln -sfn "${target}" "${source}"
+}
+
+persist_hermes_file config.yaml yaml
+persist_hermes_file .env empty
+persist_hermes_file SOUL.md empty
+# These are optional. Leave the target absent until Hermes creates it, but keep
+# the image path linked to the persistent location from the first invocation.
+persist_hermes_file auth.json absent
+persist_hermes_file state.db absent
+for name in memories cron sessions logs profiles; do
+  persist_hermes_dir "${name}"
 done
 
 # Seed portable skills exactly once. Users can edit the persistent copies.
