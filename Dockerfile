@@ -24,7 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates git cmake ninja-build build-essential pkg-config \
-      libcurl4-openssl-dev \
+      libcurl4-openssl-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=cache,id=agent-lab-llama-src,target=/cache/llama-src,sharing=locked \
@@ -48,7 +48,8 @@ RUN --mount=type=cache,id=agent-lab-llama-src,target=/cache/llama-src,sharing=lo
       -DCMAKE_BUILD_TYPE=Release \
       -DGGML_CUDA=ON \
       -DGGML_NATIVE=OFF \
-      -DLLAMA_CURL=ON \
+      -DLLAMA_BUILD_TESTS=OFF \
+      -DCMAKE_EXE_LINKER_FLAGS="-Wl,--allow-shlib-undefined" \
       -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHITECTURES}"; \
     cmake --build /cache/llama-build --target llama-server llama-cli -j"$(nproc)"; \
     rm -rf /out; \
