@@ -61,22 +61,13 @@ RUN --mount=type=cache,id=agent-lab-llama-src,target=/cache/llama-src,sharing=lo
 # -----------------------------------------------------------------------------
 FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu24.04 AS final
 
+# Component refs are declared before the layers that actually consume them, so
+# changing one component invalidates only that component and the layers after it.
+# Git/image metadata is deliberately declared and applied at the very end of the
+# stage so an ordinary source commit does not invalidate apt, OMP, or Hermes.
 ARG LLAMA_CPP_REF=v0.7.0
 ARG OMP_REF=v18.12.1
 ARG HERMES_REF=9e01b44dd23978f9ff40b7837467f3a9f1582130
-ARG BUILD_DATE=unknown
-ARG VCS_REF=unknown
-ARG IMAGE_VERSION=0.1.0
-
-LABEL org.opencontainers.image.title="agent-lab" \
-      org.opencontainers.image.description="RunPod agent harness lab: llama.cpp + Hermes Agent + Oh My Pi" \
-      org.opencontainers.image.source="https://github.com/markwelshboy/agent-lab" \
-      org.opencontainers.image.version="${IMAGE_VERSION}" \
-      org.opencontainers.image.revision="${VCS_REF}" \
-      org.opencontainers.image.created="${BUILD_DATE}" \
-      io.markwelshboy.agent-lab.llama-cpp-ref="${LLAMA_CPP_REF}" \
-      io.markwelshboy.agent-lab.omp-ref="${OMP_REF}" \
-      io.markwelshboy.agent-lab.hermes-ref="${HERMES_REF}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PATH="/opt/llama.cpp/bin:/root/.local/bin:${PATH}" \
@@ -134,4 +125,19 @@ RUN chmod +x /opt/agent-lab/bin/*.sh \
 WORKDIR /workspace/projects
 
 EXPOSE 22 8000 8001 9119
+
+ARG BUILD_DATE=unknown
+ARG VCS_REF=unknown
+ARG IMAGE_VERSION=0.1.0
+
+LABEL org.opencontainers.image.title="agent-lab" \
+      org.opencontainers.image.description="RunPod agent harness lab: llama.cpp + Hermes Agent + Oh My Pi" \
+      org.opencontainers.image.source="https://github.com/markwelshboy/agent-lab" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      io.markwelshboy.agent-lab.llama-cpp-ref="${LLAMA_CPP_REF}" \
+      io.markwelshboy.agent-lab.omp-ref="${OMP_REF}" \
+      io.markwelshboy.agent-lab.hermes-ref="${HERMES_REF}"
+
 ENTRYPOINT ["/usr/local/bin/start-agent-lab"]
