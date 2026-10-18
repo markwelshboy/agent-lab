@@ -60,7 +60,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     HF_HUB_CACHE=/workspace/hf-cache/hub \
     HUGGINGFACE_HUB_CACHE=/workspace/hf-cache/hub \
     AGENT_LAB_HOME=/workspace/agent-lab \
-    AGENT_LAB_IMAGE_ROOT=/opt/agent-lab
+    AGENT_LAB_IMAGE_ROOT=/opt/agent-lab \
+    HERMES_HOME=/opt/hermes-home
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
