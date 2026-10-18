@@ -1,0 +1,8 @@
+.git
+.gitignore
+workspace/
+models/
+*.gguf
+*.safetensors
+__pycache__/
+*.pyc
